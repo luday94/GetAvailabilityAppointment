@@ -6,14 +6,14 @@ from playwright.sync_api import sync_playwright
 import re
 
 
-url="https://www.maiia.com/dermatologue-et-venerologue/94130-nogent-sur-marne/fardet-professeur-laurence"
-reasonfinded = "Consultation de suivi"
+# url="https://www.maiia.com/dermatologue-et-venerologue/94130-nogent-sur-marne/fardet-professeur-laurence"
+# # reasonfinded = "Consultation de suivi"
 # reasonfinded = "Première consultation"
 
-url="https://www.maiia.com/medecin-generaliste/75013-paris-13e/srour-nariyanne?centerId=6a1d62b91665bef49231d513"
-# reasonfinded = "Consultation de suivi"
-reasonfinded = "Renouvellement d'ordonnance"
-url="https://www.doctolib.fr/dermatologue/nogent-sur-marne/michael-naouri/booking/availabilities?specialityId=6&telehealth=false&placeId=practice-22241&isNewPatient=true&isNewPatientBlocked=false&motiveCategoryIds%5B%5D=190149&motiveIds%5B%5D=9936384&pid=practice-22241&source=profile"
+# url="https://www.maiia.com/medecin-generaliste/75013-paris-13e/srour-nariyanne?centerId=6a1d62b91665bef49231d513"
+# # reasonfinded = "Consultation de suivi"
+# reasonfinded = "Renouvellement d'ordonnance"
+url="https://www.doctolib.fr/dermatologue/nogent-sur-marne/michael-naouri"
 reasonfinded = "Fotofinder - Cartographie numérique de l'ensemble des grains de beauté assistée par intelligence artificielle + Examen dermatologique de dépistage"
 
 """"
@@ -21,21 +21,22 @@ reasonfinded = "Fotofinder - Cartographie numérique de l'ensemble des grains de
 """
 apis=[]
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=False)
+    browser = p.chromium.launch(headless=True)
 
     page = browser.new_page()
-    f=open("cookies.json", "w+")
+    # f=open("cookies.json", "w+")
     # Extraction API de la page
     def log_request(request):
         if "api/" in request.url :
-            print(f"{request.url}", file=f)
+            # print(f"{request.url}", file=f)
             apis.append(request.url)
     page.on("request", log_request)
 
     page.goto(url)
-
-    delay= 5000  # Délai en millisecondes
-    page.wait_for_timeout(delay)
+    for i in range(10):
+        page.wait_for_timeout(300)
+        if len(apis) > 0:
+            break
     browser.close()
     f.close()
 
@@ -51,15 +52,13 @@ elif domain == "doctolib.fr":
     Doctolib API
     Récupération des l'ID de la consultation
     """
-
     print("API Doctolib trouvée")
     request=requests.get(apis[0])
-    print (f"API: {apis[0]}")
     data = request.json()
     for visit_motive in data["data"]["visit_motives"]:
         if visit_motive["name"] == reasonfinded:
             visit_motive_id = visit_motive["id"]
-            print (f"Raison de consultation {reasonfinded} trouvée avec l'ID: {visit_motive_id}")
+            # print (f"Raison de consultation {reasonfinded} trouvée avec l'ID: {visit_motive_id}")
             break
     agenda_id=None
     practice_id=None
@@ -90,23 +89,15 @@ elif domain == "doctolib.fr":
         print(f"Premier créneau disponible: {premiercreneau}")
     else:
         print("Pas de créneau disponible")
-    print(f"API créneau: {formatapi}")  
+    # print(f"API créneau: {formatapi}")  
 
 elif domain == "maiia.com":
     """
     Maiia API
     """
     print("API Maiia trouvée")
-    reason=None
-    for api in apis:
-        if "reason" in api:
-            reason=api
-            break
-    availability=None
-    for api in apis:
-        if "availability" in api:
-            availability=api
-            break
+    reason= next((api for api in apis if "reason" in api), None)
+    availability=next((api for api in apis if "availability" in api), None)
     if not availability:
         print("API availability non trouvée")
         exit(1)

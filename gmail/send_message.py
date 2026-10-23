@@ -19,7 +19,7 @@ def gmail_send_message(msg: EmailMessage):
   SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
 
   creds = Credentials.from_authorized_user_file(
-      "token.json",
+      "./secrets/token.json",
       SCOPES
   )
 
