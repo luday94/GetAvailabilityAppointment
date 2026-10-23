@@ -1,36 +1,35 @@
 import requests
-import os
-from dotenv import load_dotenv
 from datetime import datetime
 from email.message import EmailMessage
 from gmail.send_message import gmail_send_message
+from playwright.sync_api import sync_playwright
+import re
+
 
 url="https://www.maiia.com/dermatologue-et-venerologue/94130-nogent-sur-marne/fardet-professeur-laurence"
 reasonfinded = "Consultation de suivi"
 # reasonfinded = "Première consultation"
 
-# url="https://www.maiia.com/medecin-generaliste/75013-paris-13e/srour-nariyanne?centerId=6a1d62b91665bef49231d513"
-# # reasonfinded = "Consultation de suivi"
-# reasonfinded = "Renouvellement d'ordonnance"
+url="https://www.maiia.com/medecin-generaliste/75013-paris-13e/srour-nariyanne?centerId=6a1d62b91665bef49231d513"
+# reasonfinded = "Consultation de suivi"
+reasonfinded = "Renouvellement d'ordonnance"
+url="https://www.doctolib.fr/dermatologue/nogent-sur-marne/michael-naouri/booking/availabilities?specialityId=6&telehealth=false&placeId=practice-22241&isNewPatient=true&isNewPatientBlocked=false&motiveCategoryIds%5B%5D=190149&motiveIds%5B%5D=9936384&pid=practice-22241&source=profile"
+reasonfinded = "Fotofinder - Cartographie numérique de l'ensemble des grains de beauté assistée par intelligence artificielle + Examen dermatologique de dépistage"
 
-from playwright.sync_api import sync_playwright
-apis = {
-    "reason": None,
-    "availability": None
-}
-
+""""
+ Récupération des API de la page
+"""
+apis=[]
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
+    browser = p.chromium.launch(headless=False)
 
     page = browser.new_page()
     f=open("cookies.json", "w+")
+    # Extraction API de la page
     def log_request(request):
-        if "api/" in request.url and "reason" in request.url:
-            apis["reason"] = request.url
-            # print (f"API reason: {request.url}")
-        if "api/" in request.url and "availability" in request.url:
-            apis["availability"] = request.url
-            # print (f"API availability: {request.url}")
+        if "api/" in request.url :
+            print(f"{request.url}", file=f)
+            apis.append(request.url)
     page.on("request", log_request)
 
     page.goto(url)
@@ -39,55 +38,124 @@ with sync_playwright() as p:
     page.wait_for_timeout(delay)
     browser.close()
     f.close()
-print("Reason :", apis["reason"])
-print("Availability :", apis["availability"])
-load_dotenv(".env.test")
-"""
- Structure du mail 
-"""
-msg = EmailMessage()
-msg['Subject'] = f"Créneau disponible {datetime.now():%Y-%m-%d %H:%M:%S}"
-msg['From'] = os.getenv("DB_USER")
-msg['To'] = os.getenv("DB_TOMAILMESSAGE")
+
+premiercreneau=None
+domain=re.search("^(?:https?:\\/\\/)?(?:[^@\\/\\n]+@)?(?:www\\.)?([^:\\/\\n]+)",url).group(1)
 
 
+if not apis:
+    print("Aucune API trouvée")
+    exit(1)
+elif domain == "doctolib.fr":
+    """
+    Doctolib API
+    Récupération des l'ID de la consultation
+    """
 
-# Get API reason
-response=requests.get(apis["reason"])
-data = response.json()
-idreasonfinded = None
-APIavailability=apis["availability"]
-if data["total"]>0:
-    print("Plusieurs raisons de consultation disponibles")
-    for reason in data["items"]:
-        print(f"Raison: {reason['name']} - ID: {reason['id']}")
-        if reason["name"] == reasonfinded:
-            idreasonfinded = reason["id"]
-            APIavailability=f"{APIavailability}&consultationReasonId={idreasonfinded}"
+    print("API Doctolib trouvée")
+    request=requests.get(apis[0])
+    print (f"API: {apis[0]}")
+    data = request.json()
+    for visit_motive in data["data"]["visit_motives"]:
+        if visit_motive["name"] == reasonfinded:
+            visit_motive_id = visit_motive["id"]
+            print (f"Raison de consultation {reasonfinded} trouvée avec l'ID: {visit_motive_id}")
             break
-            
-
-if "consultationReasonId" not in APIavailability:
-    print(f"Raison de consultation {reasonfinded} non disponible")
-    # exit(1)
-
-
-
-response=requests.get(APIavailability)
-data = response.json()
-
-
-# Si disponibilité ?
-if data["availabilityCount"] > 0:
+    agenda_id=None
+    practice_id=None
+    for agenda in data["data"]["agendas"]:
+        for i_visit_motive_id in agenda["visit_motive_ids"]:
+            if visit_motive_id == i_visit_motive_id:
+                agenda_id = agenda["id"]
+                break
+        if agenda_id is not None:
+            practice_id = agenda["practice_id"]
+            break
     
-    print(f"Créneau pour {reasonfinded} disponible")
-    msg.set_content(f'Créneau pour {reasonfinded} disponible:\n{url}')
+    today=datetime.now().strftime("%Y-%m-%d")
+    formatapi=f"https://www.doctolib.fr/availabilities.json?visit_motive_ids={visit_motive_id}&agenda_ids={agenda_id}&practice_ids={practice_id}&telehealth=false&start_date={today}&limit=15"
+    headers = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/141.0 Safari/537.36"
+        )
+    }
+
+    # Vérification de la disponibilité
+    request=requests.get(formatapi, headers=headers)
+    data = request.json()
+    if data.get("next_slot"):
+        premiercreneau=data["next_slot"]
+        print(f"Premier créneau disponible: {premiercreneau}")
+    else:
+        print("Pas de créneau disponible")
+    print(f"API créneau: {formatapi}")  
+
+elif domain == "maiia.com":
+    """
+    Maiia API
+    """
+    print("API Maiia trouvée")
+    reason=None
+    for api in apis:
+        if "reason" in api:
+            reason=api
+            break
+    availability=None
+    for api in apis:
+        if "availability" in api:
+            availability=api
+            break
+    if not availability:
+        print("API availability non trouvée")
+        exit(1)
+    APIavailability=availability
+
+    # Récupération de l'ID de la raison de consultation
+    if reason is not None:
+        response=requests.get(reason)
+        data = response.json()
+        if data["total"]>0:
+            print("Plusieurs raisons de consultation disponibles")
+            for reason in data["items"]:
+                # print(f"Raison: {reason['name']} - ID: {reason['id']}")
+                if reason["name"] == reasonfinded:
+                    idreasonfinded = reason["id"]
+                    APIavailability=f"{APIavailability}&consultationReasonId={idreasonfinded}"
+                    break
+        if "consultationReasonId" not in APIavailability:
+            print(f"Raison de consultation {reasonfinded} non disponible")
+    else:
+        print("Aucune raison de consultation trouvée")
+
+    # Vérification de la disponibilité
+    response=requests.get(APIavailability)
+    data = response.json()
+    if data["availabilityCount"] > 0:
+        premiercreneau=data["firstAvailabilityStartDateTime"]
+        print(f"Premier créneau disponible: {premiercreneau}")
+    else:
+        print("Pas de créneau disponible")
+
+
+
+"""
+ Structure et envoie du mail 
+"""
+
+msg=EmailMessage()
+# msg['Subject'] = "Test mail par API"
+msg['Subject'] = f"Créneau disponible {datetime.now():%Y-%m-%d %H:%M:%S}"
+msg["To"] = "ludovictaut@gmail.com"
+
+
+if premiercreneau:
+    print(f"Créneau pour {reasonfinded} disponible le {premiercreneau}")
+    msg.set_content(f'Créneau pour {reasonfinded} disponible le: {premiercreneau}\n{url}')
     # Envoi du mail via l'API Gmail
     try:
         gmail_send_message(msg) 
         print("Email envoyé via API Gmail")
     except Exception as e:
         print(f"Erreur : {e}")
-
-else:
-    print("Pas de créneau disponible")
