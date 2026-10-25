@@ -3,4 +3,5 @@
 .env.*
 !.env.example
 token.json
-**/*__pycache__*
+**/__pycache__*
+historique.json

@@ -1,22 +1,24 @@
 import requests
+import json
 from datetime import datetime
 from email.message import EmailMessage
 from gmail.send_message import gmail_send_message
 from playwright.sync_api import sync_playwright
+import os
 import re
-
+formatdate="%Y-%m-%d %H:%M:%S"
 
 def nowstr():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().strftime(formatdate)
 print(f"{nowstr()}: Début du script")
 
-url="https://www.maiia.com/dermatologue-et-venerologue/94130-nogent-sur-marne/fardet-professeur-laurence"
+# url="https://www.maiia.com/dermatologue-et-venerologue/94130-nogent-sur-marne/fardet-professeur-laurence"
 # reasonfinded = "Consultation de suivi"
-reasonfinded = "Première consultation"
+# # reasonfinded = "Première consultation"
 
-# url="https://www.maiia.com/medecin-generaliste/75013-paris-13e/srour-nariyanne?centerId=6a1d62b91665bef49231d513"
-# # reasonfinded = "Consultation de suivi"
-# reasonfinded = "Renouvellement d'ordonnance"
+url="https://www.maiia.com/medecin-generaliste/75013-paris-13e/srour-nariyanne?centerId=6a1d62b91665bef49231d513"
+# reasonfinded = "Consultation de suivi"
+reasonfinded = "Renouvellement d'ordonnance"
 # url="https://www.doctolib.fr/dermatologue/nogent-sur-marne/michael-naouri"
 # reasonfinded = "Fotofinder - Cartographie numérique de l'ensemble des grains de beauté assistée par intelligence artificielle + Examen dermatologique de dépistage"
 
@@ -47,6 +49,14 @@ with sync_playwright() as p:
 premiercreneau=None
 domain=re.search("^(?:https?:\\/\\/)?(?:[^@\\/\\n]+@)?(?:www\\.)?([^:\\/\\n]+)",url).group(1)
 
+file_path_histo="./historique.json"
+
+if os.path.exists(file_path_histo):
+    with  open(file_path_histo,"r") as file:
+        histostr=file.read()
+        histojson=json.loads(histostr)
+else:
+    histojson={}
 
 if not apis:
     print(f"{nowstr()}: Aucune API trouvée")
@@ -91,6 +101,9 @@ elif domain == "doctolib.fr":
     if data.get("next_slot"):
         premiercreneau=data["next_slot"]
         print(f"{nowstr()}: Premier créneau disponible: {premiercreneau}")
+    elif data.get("availabilities"):
+        premiercreneau=datetime.strptime(data["availabilities"][0]["solts"][0], "%Y-%m-%dT%H:%M:%S.%fZ")
+        print(f"{nowstr()}: Premier créneau disponible: {premiercreneau}")
     else:
         print("Pas de créneau disponible")
     # print(f"{nowstr()}: API créneau: {formatapi}")  
@@ -128,7 +141,7 @@ elif domain == "maiia.com":
     response=requests.get(APIavailability)
     data = response.json()
     if data["availabilityCount"] > 0:
-        premiercreneau=data["firstAvailabilityStartDateTime"]
+        premiercreneau=datetime.strptime(data["firstAvailabilityStartDateTime"], "%Y-%m-%dT%H:%M:%S.%fZ")
         print(f"{nowstr()}: Premier créneau disponible: {premiercreneau}")
     else:
         print(f"{nowstr()}: Pas de créneau disponible")
@@ -140,17 +153,23 @@ elif domain == "maiia.com":
 """
 
 msg=EmailMessage()
-# msg['Subject'] = "Test mail par API"
 msg['Subject'] = f"Créneau disponible {datetime.now():%Y-%m-%d %H:%M:%S}"
 msg["To"] = "ludovictaut@gmail.com"
 
 
-if premiercreneau:
-    print(f"{nowstr()}: Créneau pour {reasonfinded} disponible le {premiercreneau}")
-    msg.set_content(f'Créneau pour {reasonfinded} disponible le: {premiercreneau}\n{url}')
+
+if premiercreneau is not None and ((not url+"\\"+reasonfinded in histojson) or (url+"\\"+reasonfinded in histojson and (datetime.strptime(histojson[url+"\\"+reasonfinded],formatdate)>premiercreneau or datetime.strptime(histojson[url+"\\"+reasonfinded],formatdate)<datetime.now()))):
+    print(f"{nowstr()}: Créneau pour {reasonfinded} disponible le {premiercreneau.strftime(formatdate)}")
+    msg.set_content(f'Créneau pour {reasonfinded} disponible le: {premiercreneau.strftime(formatdate)}\n{url}')
     # Envoi du mail via l'API Gmail
     try:
         gmail_send_message(msg) 
         print(f"{nowstr()}: Email envoyé via API Gmail")
+        histojson[url+"\\"+reasonfinded]=premiercreneau.strftime(formatdate)
+        with open(file_path_histo, "w+") as file:
+            file.write(json.dumps(histojson,indent=4))
+        
     except Exception as e:
         print(f"{nowstr()}: Erreur : {e}")
+elif premiercreneau is not None and url+"\\"+reasonfinded  in histojson and datetime.strptime(histojson[url+"\\"+reasonfinded ],formatdate)<=premiercreneau:
+    print(f"{nowstr()}: Un mail à déjà été envoyé")
