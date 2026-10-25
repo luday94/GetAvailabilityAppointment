@@ -6,15 +6,19 @@ from playwright.sync_api import sync_playwright
 import re
 
 
-# url="https://www.maiia.com/dermatologue-et-venerologue/94130-nogent-sur-marne/fardet-professeur-laurence"
-# # reasonfinded = "Consultation de suivi"
-# reasonfinded = "Première consultation"
+def nowstr():
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+print(f"{nowstr()}: Début du script")
+
+url="https://www.maiia.com/dermatologue-et-venerologue/94130-nogent-sur-marne/fardet-professeur-laurence"
+# reasonfinded = "Consultation de suivi"
+reasonfinded = "Première consultation"
 
 # url="https://www.maiia.com/medecin-generaliste/75013-paris-13e/srour-nariyanne?centerId=6a1d62b91665bef49231d513"
 # # reasonfinded = "Consultation de suivi"
 # reasonfinded = "Renouvellement d'ordonnance"
-url="https://www.doctolib.fr/dermatologue/nogent-sur-marne/michael-naouri"
-reasonfinded = "Fotofinder - Cartographie numérique de l'ensemble des grains de beauté assistée par intelligence artificielle + Examen dermatologique de dépistage"
+# url="https://www.doctolib.fr/dermatologue/nogent-sur-marne/michael-naouri"
+# reasonfinded = "Fotofinder - Cartographie numérique de l'ensemble des grains de beauté assistée par intelligence artificielle + Examen dermatologique de dépistage"
 
 """"
  Récupération des API de la page
@@ -28,31 +32,31 @@ with sync_playwright() as p:
     # Extraction API de la page
     def log_request(request):
         if "api/" in request.url :
-            # print(f"{request.url}", file=f)
+            # print(f"{nowstr()}: {request.url}", file=f)
             apis.append(request.url)
     page.on("request", log_request)
 
     page.goto(url)
     for i in range(10):
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(600)
         if len(apis) > 0:
             break
     browser.close()
-    f.close()
+    # f.close()
 
 premiercreneau=None
 domain=re.search("^(?:https?:\\/\\/)?(?:[^@\\/\\n]+@)?(?:www\\.)?([^:\\/\\n]+)",url).group(1)
 
 
 if not apis:
-    print("Aucune API trouvée")
+    print(f"{nowstr()}: Aucune API trouvée")
     exit(1)
 elif domain == "doctolib.fr":
     """
     Doctolib API
     Récupération des l'ID de la consultation
     """
-    print("API Doctolib trouvée")
+    print(f"{nowstr()}: API Doctolib trouvée")
     request=requests.get(apis[0])
     data = request.json()
     for visit_motive in data["data"]["visit_motives"]:
@@ -86,20 +90,20 @@ elif domain == "doctolib.fr":
     data = request.json()
     if data.get("next_slot"):
         premiercreneau=data["next_slot"]
-        print(f"Premier créneau disponible: {premiercreneau}")
+        print(f"{nowstr()}: Premier créneau disponible: {premiercreneau}")
     else:
         print("Pas de créneau disponible")
-    # print(f"API créneau: {formatapi}")  
+    # print(f"{nowstr()}: API créneau: {formatapi}")  
 
 elif domain == "maiia.com":
     """
     Maiia API
     """
-    print("API Maiia trouvée")
+    print(f"{nowstr()}: API Maiia trouvée")
     reason= next((api for api in apis if "reason" in api), None)
     availability=next((api for api in apis if "availability" in api), None)
     if not availability:
-        print("API availability non trouvée")
+        print(f"{nowstr()}: API availability non trouvée")
         exit(1)
     APIavailability=availability
 
@@ -108,26 +112,26 @@ elif domain == "maiia.com":
         response=requests.get(reason)
         data = response.json()
         if data["total"]>0:
-            print("Plusieurs raisons de consultation disponibles")
+            print(f"{nowstr()}: Plusieurs raisons de consultation disponibles")
             for reason in data["items"]:
-                # print(f"Raison: {reason['name']} - ID: {reason['id']}")
+                # print(f"{nowstr()}: Raison: {reason['name']} - ID: {reason['id']}")
                 if reason["name"] == reasonfinded:
                     idreasonfinded = reason["id"]
                     APIavailability=f"{APIavailability}&consultationReasonId={idreasonfinded}"
                     break
         if "consultationReasonId" not in APIavailability:
-            print(f"Raison de consultation {reasonfinded} non disponible")
+            print(f"{nowstr()}: Raison de consultation {reasonfinded} non disponible")
     else:
-        print("Aucune raison de consultation trouvée")
+        print(f"{nowstr()}: Aucune raison de consultation trouvée")
 
     # Vérification de la disponibilité
     response=requests.get(APIavailability)
     data = response.json()
     if data["availabilityCount"] > 0:
         premiercreneau=data["firstAvailabilityStartDateTime"]
-        print(f"Premier créneau disponible: {premiercreneau}")
+        print(f"{nowstr()}: Premier créneau disponible: {premiercreneau}")
     else:
-        print("Pas de créneau disponible")
+        print(f"{nowstr()}: Pas de créneau disponible")
 
 
 
@@ -142,11 +146,11 @@ msg["To"] = "ludovictaut@gmail.com"
 
 
 if premiercreneau:
-    print(f"Créneau pour {reasonfinded} disponible le {premiercreneau}")
+    print(f"{nowstr()}: Créneau pour {reasonfinded} disponible le {premiercreneau}")
     msg.set_content(f'Créneau pour {reasonfinded} disponible le: {premiercreneau}\n{url}')
     # Envoi du mail via l'API Gmail
     try:
         gmail_send_message(msg) 
-        print("Email envoyé via API Gmail")
+        print(f"{nowstr()}: Email envoyé via API Gmail")
     except Exception as e:
-        print(f"Erreur : {e}")
+        print(f"{nowstr()}: Erreur : {e}")
