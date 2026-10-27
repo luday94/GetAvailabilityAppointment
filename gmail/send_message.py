@@ -7,46 +7,38 @@ from googleapiclient.errors import HttpError
 
 
 def gmail_send_message(msg: EmailMessage):
-  """Create and send an email message
-  Print the returned  message id
-  Returns: Message object, including message id
+    """Create and send an email message
+    Print the returned  message id
+    Returns: Message object, including message id
 
-  Load pre-authorized user credentials from the environment.
-  TODO(developer) - See https://developers.google.com/identity
-  for guides on implementing OAuth2 for the application.
-  """
+    Load pre-authorized user credentials from the environment.
+    TODO(developer) - See https://developers.google.com/identity
+    for guides on implementing OAuth2 for the application.
+    """
 
-  SCOPES = ["https://www.googleapis.com/auth/gmail.send"]
+    scopes = ["https://www.googleapis.com/auth/gmail.send"]
 
-  creds = Credentials.from_authorized_user_file(
-      "./secrets/token.json",
-      SCOPES
-  )
+    creds = Credentials.from_authorized_user_file("./secrets/token.json", scopes)
 
-  try:
-    service = build("gmail", "v1", credentials=creds)
+    try:
+        service = build("gmail", "v1", credentials=creds)
 
-    # encoded message
-    encoded_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
+        # encoded message
+        encoded_message = base64.urlsafe_b64encode(msg.as_bytes()).decode()
 
-    create_message = {"raw": encoded_message}
-    # pylint: disable=E1101
-    send_message = (
-        service.users()
-        .messages()
-        .send(userId="me", body=create_message)
-        .execute()
-    )
-    print(f'Message Id: {send_message["id"]}')
-  except HttpError as error:
-    print(f"An error occurred: {error}")
-    send_message = None
-  return send_message
+        create_message = {"raw": encoded_message}
+        # pylint: disable=E1101
+        send_message = service.users().messages().send(userId="me", body=create_message).execute()
+        print(f"Message Id: {send_message['id']}")
+    except HttpError as error:
+        print(f"An error occurred: {error}")
+        send_message = None
+    return send_message
 
 
 if __name__ == "__main__":
-  message=EmailMessage()
-  message['Subject'] = "Test mail par API"
-  message.set_content("Ce message est envoyé par l'API Gmail pour des tests")
-  message["To"] = "ludovictaut@gmail.com"
-  gmail_send_message(message)
+    message = EmailMessage()
+    message["Subject"] = "Test mail par API"
+    message.set_content("Ce message est envoyé par l'API Gmail pour des tests")
+    message["To"] = "ludovictaut@gmail.com"
+    gmail_send_message(message)
