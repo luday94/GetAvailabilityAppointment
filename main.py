@@ -13,6 +13,14 @@ from playwright.sync_api import sync_playwright
 from gmail.send_message import gmail_send_message
 
 FORMATDATE = "%Y-%m-%d %H:%M:%S"
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/141.0 Safari/537.36"
+    )
+}
+FILE_PATH_HISTO = "./historique.json"
 
 
 def now_str():
@@ -26,11 +34,13 @@ def now_str():
 
 class GetAvailabilityAppointment:
     def main(self, url, consultation_reason):
+
         print(f"{now_str()}: Début du script")
         """"
         Récupération des API de la page
         """
         apis = []
+        visit_ids = {}
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
@@ -54,15 +64,7 @@ class GetAvailabilityAppointment:
             "^(?:https?:\\/\\/)?(?:[^@\\/\\n]+@)?(?:www\\.)?([^:\\/\\n]+)", url
         ).group(1)
 
-        file_path_histo = "./historique.json"
-
-        if os.path.exists(file_path_histo):
-            with open(file_path_histo) as file:
-                read = file.read()
-                json_historique = json.loads(read)
-        else:
-            json_historique = {}
-
+        matched_reason_id = None
         if not apis:
             print(f"{now_str()}: Aucune API trouvée")
             sys.exit(1)
@@ -74,53 +76,45 @@ class GetAvailabilityAppointment:
             print(f"{now_str()}: API Doctolib trouvée")
             request = requests.get(apis[0])
             data = request.json()
-            visit_motive_id = None
             for visit_motive in data["data"]["visit_motives"]:
+                visit_ids[visit_motive["name"]] = visit_motive["id"]
                 if visit_motive["name"] == consultation_reason:
-                    visit_motive_id = visit_motive["id"]
+                    matched_reason_id = visit_motive["id"]
                     break
-            print(f"visit_motive_id: {visit_motive_id}\nconsultation_reason: {consultation_reason}")
-            agenda_id = None
-            practice_id = None
-            for agenda in data["data"]["agendas"]:
-                for i_visit_motive_id in agenda["visit_motive_ids"]:
-                    if visit_motive_id == i_visit_motive_id:
-                        agenda_id = agenda["id"]
+            if matched_reason_id is not None:
+                agenda_id = None
+                practice_id = None
+                for agenda in data["data"]["agendas"]:
+                    for i_visit_motive_id in agenda["visit_motive_ids"]:
+                        if matched_reason_id == i_visit_motive_id:
+                            agenda_id = agenda["id"]
+                            break
+                    if agenda_id is not None:
+                        practice_id = agenda["practice_id"]
                         break
-                if agenda_id is not None:
-                    practice_id = agenda["practice_id"]
-                    break
 
-            today = datetime.now().strftime("%Y-%m-%d")
-            formatapi = (
-                f"https://www.doctolib.fr/availabilities.json?visit_motive_ids="
-                f"{visit_motive_id}"
-                f"&agenda_ids={agenda_id}"
-                f"&practice_ids={practice_id}"
-                f"&telehealth=false"
-                f"&start_date={today}"
-                f"&limit=15"
-            )
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/141.0 Safari/537.36"
+                today = datetime.now().strftime("%Y-%m-%d")
+                formatapi = (
+                    f"https://www.doctolib.fr/availabilities.json?visit_motive_ids"
+                    f"={matched_reason_id}"
+                    f"&agenda_ids={agenda_id}"
+                    f"&practice_ids={practice_id}"
+                    f"&telehealth=false"
+                    f"&start_date={today}"
+                    f"&limit=15"
                 )
-            }
 
-            # Vérification de la disponibilité
-            request = requests.get(formatapi, headers=headers)
-            data = request.json()
-            if data.get("next_slot"):
-                premier_creneau = datetime.fromisoformat(data["next_slot"])
-                print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
-            elif data.get("availabilities"):
-                premier_creneau = datetime.fromisoformat(data["availabilities"][0]["solts"][0])
-                print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
-            else:
-                print("Pas de créneau disponible")
-            # print(f"{now_str()}: API créneau: {formatapi}")
+                # Vérification de la disponibilité
+                request = requests.get(formatapi, headers=HEADERS)
+                data = request.json()
+                if data.get("next_slot"):
+                    premier_creneau = datetime.fromisoformat(data["next_slot"])
+                    print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
+                elif data.get("availabilities"):
+                    premier_creneau = datetime.fromisoformat(data["availabilities"][0]["solts"][0])
+                    print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
+                else:
+                    print("Pas de créneau disponible")
 
         elif domain == "maiia.com":
             """
@@ -141,6 +135,7 @@ class GetAvailabilityAppointment:
                 if data["total"] > 0:
                     print(f"{now_str()}: Plusieurs raisons de consultation disponibles")
                     for reason in data["items"]:
+                        visit_ids[reason["name"]] = reason["id"]
                         # print(f"{now_str()}: Raison: {reason['name']} - ID: {reason['id']}")
                         if reason["name"] == consultation_reason:
                             matched_reason_id = reason["id"]
@@ -148,71 +143,110 @@ class GetAvailabilityAppointment:
                                 f"{availability_api}&consultationReasonId={matched_reason_id}"
                             )
                             break
-                if "consultationReasonId" not in availability_api:
+                if matched_reason_id is None:
                     print(
-                        f"{now_str()}: Raison de consultation {consultation_reason} non disponible"
+                        f"{now_str()}: Raison de consultation {consultation_reason} "
+                        "non disponible {visit_ids}"
                     )
+                else:
+                    # Vérification de la disponibilité
+                    response = requests.get(availability_api)
+                    data = response.json()
+                    if data["availabilityCount"] > 0:
+                        premier_creneau = datetime.strptime(
+                            data["firstAvailabilityStartDateTime"], "%Y-%m-%dT%H:%M:%S.%fZ"
+                        )
+                        print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
+                    else:
+                        print(f"{now_str()}: Pas de créneau disponible")
             else:
                 print(f"{now_str()}: Aucune raison de consultation trouvée")
 
-            # Vérification de la disponibilité
-            response = requests.get(availability_api)
-            data = response.json()
-            if data["availabilityCount"] > 0:
-                premier_creneau = datetime.strptime(
-                    data["firstAvailabilityStartDateTime"], "%Y-%m-%dT%H:%M:%S.%fZ"
-                )
-                print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
-            else:
-                print(f"{now_str()}: Pas de créneau disponible")
-
         """
-        Structure et envoie du mail
+        Structure du message
         """
+        is_alerte_raison, is_rdv_trouve = False, False
+        if os.path.exists(FILE_PATH_HISTO):
+            with open(FILE_PATH_HISTO) as file:
+                read = file.read()
+                json_historique = json.loads(read)
+        else:
+            json_historique = {}
 
-        msg = EmailMessage()
-        msg["Subject"] = f"Créneau disponible {datetime.now():%Y-%m-%d %H:%M:%S}"
-        msg["To"] = "ludovictaut@gmail.com"
+        message = ""
 
-        url_et_motif_consult = url + "\\" + consultation_reason
-        if premier_creneau is not None and (
-            (url_et_motif_consult not in json_historique)
-            or (
-                url_et_motif_consult in json_historique
-                and (
-                    datetime.strptime(json_historique[url_et_motif_consult], FORMATDATE)
-                    > premier_creneau
-                    or datetime.strptime(json_historique[url_et_motif_consult], FORMATDATE)
-                    < datetime.now()
-                )
+        is_in_historique = url in json_historique and consultation_reason in json_historique[url]
+
+        is_nouvel_date = (
+            premier_creneau is not None
+            and is_in_historique
+            and (
+                datetime.strptime(json_historique[url][consultation_reason]["date"], FORMATDATE)
+                > premier_creneau
+                or datetime.strptime(json_historique[url][consultation_reason]["date"], FORMATDATE)
+                < datetime.now()
             )
-        ):
-            print(FORMATDATE)
-            print(
-                f"{now_str()}: Créneau pour {consultation_reason} "
-                f"disponible le {premier_creneau.strftime(FORMATDATE)}"
-            )
-            msg.set_content(
+        )
+
+        is_date_deja_envoye = premier_creneau is not None and (
+            is_in_historique
+            and datetime.strptime(json_historique[url][consultation_reason]["date"], FORMATDATE)
+            <= premier_creneau
+        )
+
+        if (premier_creneau is not None and not is_in_historique) or is_nouvel_date:
+            is_rdv_trouve = True
+            message = (
                 f"Créneau pour {consultation_reason} disponible le: "
                 f"{premier_creneau.strftime(FORMATDATE)}\n{url}"
             )
-            # Envoi du mail via l'API Gmail
+        elif is_date_deja_envoye:
+            print(f"{now_str()}: Un mail à déjà été envoyé")
+
+        if matched_reason_id is None and not (
+            url in json_historique
+            and consultation_reason in json_historique[url]
+            and json_historique[url][consultation_reason]["is_alerte_raison"]
+        ):
+            print(
+                f"{now_str()}: Pas de correspondance pour consultation_reason, ajout d'une alerte"
+            )
+            is_alerte_raison = True
+            list_reasons = ("\n-").join(visit_ids.keys())
+            message = (
+                f"Attention! Pas de correspondance entre:\n-{consultation_reason}\n"
+                f"Et la list suivant:\n-{list_reasons}\n"
+                "Veuillez vériffier l'argument "
+                f"CONSULTATION_REASON fournie\n{message}"
+            )
+        elif matched_reason_id is None:
+            print(f"{now_str()}: Un mail d'alerte à déjà été envoyé")
+
+        """Envoi du mail via l'API Gmail si contient un message"""
+
+        if is_alerte_raison or is_rdv_trouve:
             try:
-                gmail_send_message(msg)
+                msg = EmailMessage()
+                msg["Subject"] = f"Créneau disponible {datetime.now():%Y-%m-%d %H:%M:%S}"
+                msg["To"] = "ludovictaut@gmail.com"
+                msg.set_content(message)
+                # gmail_send_message(msg)
                 print(f"{now_str()}: Email envoyé via API Gmail")
-                json_historique[url_et_motif_consult] = premier_creneau.strftime(FORMATDATE)
-                with open(file_path_histo, "w+") as file:
+                if url not in json_historique:
+                    json_historique[url] = {}
+                json_historique[url][consultation_reason] = {
+                    "date": premier_creneau.strftime(FORMATDATE)
+                    if premier_creneau is not None
+                    else datetime.now().strftime(FORMATDATE),
+                    "is_alerte_raison": is_alerte_raison,
+                    "is_rdv_trouve": is_rdv_trouve,
+                }
+
+                with open(FILE_PATH_HISTO, "w+") as file:
                     file.write(json.dumps(json_historique, indent=4))
 
             except Exception as e:
                 print(f"{now_str()}: Erreur : {e}")
-        elif (
-            premier_creneau is not None
-            and url_et_motif_consult in json_historique
-            and datetime.strptime(json_historique[url_et_motif_consult], FORMATDATE)
-            <= premier_creneau
-        ):
-            print(f"{now_str()}: Un mail à déjà été envoyé")
 
 
 if __name__ == "__main__":
