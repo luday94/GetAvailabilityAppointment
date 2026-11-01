@@ -53,6 +53,14 @@ class GetAvailabilityAppointment:
 
         apis = []
         with sync_playwright() as p:
+            executable = p.chromium.executable_path
+
+            if not os.path.exists(executable):
+                print(
+                    "Chromium non installé pour l'installé exécuter la commande suivante: "
+                    "python -m playwright install chromium"
+                )
+                exit(1)
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
 
