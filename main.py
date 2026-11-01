@@ -35,6 +35,21 @@ def get_json(url: str) -> dict:
 
 class GetAvailabilityAppointment:
     def get_apis_from_page(self, url):
+        """Récupère les API depuis une page web ouvert par sync_paywright
+
+        Parameters
+        ----------
+        url : string
+            Url de la page sur laquel les api doit etre extraite
+
+        Returns
+        -------
+        apis : list of string
+            List des apis extraite sur la page Url
+        domain : string
+            Domaine de l'url fournie
+        """
+
         apis = []
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
@@ -63,6 +78,27 @@ class GetAvailabilityAppointment:
         return apis, domain
 
     def get_doctolib_availebility(self, apis, consultation_reason):
+        """Récupère les rdv depuis les APIs du domain Doctolib si pas
+        de corespondance avec consultation_reason extrait les nom des
+        motif de consultation mais ne cherche pas si des rdv sont
+        disponible
+
+        Parameters
+        ----------
+        apis : list of string
+            List des apis extraite sur la page Url
+        consultation_reason : string
+            Le motif fourni en argument du main
+
+        Returns
+        -------
+            premier_creneau : dateTime
+                Date du premier rdv associé à consultation_reason
+            visit_ids : dictionary of string,object
+                list des nom des motif de rdv possible pour le practicien
+            matched_reason_id : id associé à consultation_reason
+        """
+
         premier_creneau = None
         matched_reason_id = None
         visit_ids = {}
@@ -113,6 +149,27 @@ class GetAvailabilityAppointment:
         return premier_creneau, visit_ids, matched_reason_id
 
     def get_maiia_availebility(self, apis, consultation_reason):
+        """Récupère les rdv depuis les APIs du domain Maiia si pas
+        de corespondance avec consultation_reason extrait les nom des
+        motif de consultation mais ne cherche pas si des rdv sont
+        disponible
+
+        Parameters
+        ----------
+            apis : list of string
+                List des apis extraite sur la page Url
+            consultation_reason : string
+                Le motif fourni en argument du main
+
+        Returns
+        -------
+            premier_creneau : dateTime
+                Date du premier rdv associé à consultation_reason
+            visit_ids : dictionary of string,object
+                list des nom des motif de rdv possible pour le practicien
+            matched_reason_id : id associé à consultation_reason
+        """
+
         premier_creneau = None
         matched_reason_id = None
         visit_ids = {}
