@@ -44,10 +44,11 @@ class GetAvailabilityAppointment:
 
         Returns
         -------
-        apis : list of string
-            List des apis extraite sur la page Url
-        domain : string
-            Domaine de l'url fournie
+        tuple
+            apis : list of string
+                List des apis extraite sur la page Url
+            domain : string
+                Domaine de l'url fournie
         """
 
         apis = []
@@ -92,6 +93,7 @@ class GetAvailabilityAppointment:
 
         Returns
         -------
+        tuple
             premier_creneau : dateTime
                 Date du premier rdv associé à consultation_reason
             visit_ids : dictionary of string,object
@@ -156,13 +158,14 @@ class GetAvailabilityAppointment:
 
         Parameters
         ----------
-            apis : list of string
-                List des apis extraite sur la page Url
-            consultation_reason : string
-                Le motif fourni en argument du main
+        apis : list of string
+            List des apis extraite sur la page Url
+        consultation_reason : string
+            Le motif fourni en argument du main
 
         Returns
         -------
+        tuple
             premier_creneau : dateTime
                 Date du premier rdv associé à consultation_reason
             visit_ids : dictionary of string,object
@@ -224,6 +227,34 @@ class GetAvailabilityAppointment:
         visit_ids,
         json_historique,
     ):
+        """créé le corps du message et retourne
+        deux bolléen pour savoir si le message doit etre envoyé
+
+        Parameters
+        ----------
+        apis : list of string
+            List des apis extraite sur la page Url
+        consultation_reason : string
+            Le motif fourni en argument du main
+        premier_creneau : dateTime
+            Date du premier rdv associé à consultation_reason
+        matched_reason_id : id
+            Id associé à consultation_reason
+        visit_ids : dictionary of string,object
+            List des noms des motifs de rdv possible pour le praticien
+        json_historique : dictionary of string,object
+            Historique des rdv déjà trouvé pour le praticien
+
+        Returns
+        -------
+        tuple
+            is_alerte_raison : bool
+                True si une alerte doit être envoyée pour la raison de consultation.
+            is_rdv_trouve : bool
+                True si un nouveau rendez-vous a été trouvé.
+            message : str
+                Le corps du message à envoyer.
+        """
         is_alerte_raison, is_rdv_trouve = False, False
         message = ""
 
