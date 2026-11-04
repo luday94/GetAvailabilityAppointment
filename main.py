@@ -300,11 +300,15 @@ class GetAvailabilityAppointment:
         elif is_date_deja_envoye:
             print(f"{now_str()}: Un mail à déjà été envoyé")
 
-        # Si la raison fournie n'est pas bonne
-        if matched_reason_id is None and not (
-            url in json_historique
-            and consultation_reason in json_historique[url]
-            and json_historique[url][consultation_reason]["is_alerte_raison"]
+        # Si la raison fournie n'est pas bonne alors la fournir si elle exite à l'utilisateur
+        if (
+            matched_reason_id is None
+            and visit_ids.keys().__len__() > 0
+            and not (
+                url in json_historique
+                and consultation_reason in json_historique[url]
+                and json_historique[url][consultation_reason]["is_alerte_raison"]
+            )
         ):
             print(
                 f"{now_str()}: Pas de correspondance pour consultation_reason, ajout d'une alerte"
@@ -317,7 +321,7 @@ class GetAvailabilityAppointment:
                 "Veuillez vériffier l'argument "
                 f"CONSULTATION_REASON fournie\n{message}"
             )
-        elif matched_reason_id is None:
+        elif matched_reason_id is None and visit_ids.keys().__len__() > 0:
             print(f"{now_str()}: Un mail d'alerte à déjà été envoyé")
         return is_alerte_raison, is_rdv_trouve, message
 
