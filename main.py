@@ -2,17 +2,17 @@ import argparse
 import json
 import os
 import re
-import sys
 from datetime import datetime
 from email.message import EmailMessage
 
 import requests
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
 
 from gmail.send_message import gmail_send_message
 
 FORMATDATE = "%Y-%m-%d %H:%M:%S"
+
+
 HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -20,6 +20,7 @@ HEADERS = {
         "Chrome/141.0 Safari/537.36"
     )
 }
+
 FILE_PATH_HISTO = "./historique.json"
 
 
@@ -34,59 +35,7 @@ def get_json(url: str) -> dict:
 
 
 class GetAvailabilityAppointment:
-    def get_apis_from_page(self, url):
-        """Récupère les API depuis une page web ouvert par sync_paywright
-
-        Parameters
-        ----------
-        url : string
-            Url de la page sur laquel les api doit etre extraite
-
-        Returns
-        -------
-        tuple
-            apis : list of string
-                List des apis extraite sur la page Url
-            domain : string
-                Domaine de l'url fournie
-        """
-
-        apis = []
-        with sync_playwright() as p:
-            executable = p.chromium.executable_path
-
-            if not os.path.exists(executable):
-                print(
-                    "Chromium non installé pour l'installé exécuter la commande suivante: "
-                    "python -m playwright install chromium"
-                )
-                exit(1)
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
-
-            def log_request(request):
-                if "api/" in request.url:
-                    # print(f"{now_str()}: {request.url}", file=f)
-                    apis.append(request.url)
-
-            page.on("request", log_request)
-            page.goto(url)
-            for i in range(10):
-                page.wait_for_timeout(3000)
-                if len(apis) > 0:
-                    break
-            browser.close()
-            # f.close()
-        domain = re.search(
-            "^(?:https?:\\/\\/)?(?:[^@\\/\\n]+@)?(?:www\\.)?([^:\\/\\n]+)", url
-        ).group(1)
-        if not apis:
-            print(f"{now_str()}: Aucune API trouvée")
-            sys.exit(1)
-
-        return apis, domain
-
-    def get_doctolib_availebility(self, apis, consultation_reason):
+    def get_doctolib_availebility(self, url, consultation_reason):
         """Récupère les rdv depuis les APIs du domain Doctolib si pas
         de corespondance avec consultation_reason extrait les nom des
         motif de consultation mais ne cherche pas si des rdv sont
@@ -94,8 +43,8 @@ class GetAvailabilityAppointment:
 
         Parameters
         ----------
-        apis : list of string
-            List des apis extraite sur la page Url
+        url : string
+            Url de la page sur laquel les api doit etre extraite
         consultation_reason : string
             Le motif fourni en argument du main
 
@@ -112,13 +61,17 @@ class GetAvailabilityAppointment:
         premier_creneau = None
         matched_reason_id = None
         visit_ids = {}
-
-        print(f"{now_str()}: API Doctolib trouvée")
-        data = get_json(apis[0])
+        api_param = re.search("\\/(?P<api_param>[^\\/\\?]*)(\\?|$)", url, re.I | re.M).group(
+            "api_param"
+        )
+        print(f"{now_str()}: API Doctolib trouvée {api_param}")
+        data = get_json(
+            f"https://www.doctolib.fr/online_booking/api/slot_selection_funnel/v1/info.json?profile_slug={api_param}&locale=fr"
+        )
 
         for visit_motive in data["data"]["visit_motives"]:
             visit_ids[visit_motive["name"]] = visit_motive["id"]
-            if visit_motive["name"] == consultation_reason:
+            if visit_motive["name"].strip() == consultation_reason.strip():
                 matched_reason_id = visit_motive["id"]
                 break
         if matched_reason_id is not None:
@@ -134,9 +87,9 @@ class GetAvailabilityAppointment:
                     break
 
             today = datetime.now().strftime("%Y-%m-%d")
-            formatapi = (
-                f"https://www.doctolib.fr/availabilities.json?visit_motive_ids"
-                f"={matched_reason_id}"
+            format_api = (
+                f"https://www.doctolib.fr/availabilities.json?"
+                f"visit_motive_ids={matched_reason_id}"
                 f"&agenda_ids={agenda_id}"
                 f"&practice_ids={practice_id}"
                 f"&telehealth=false"
@@ -145,20 +98,25 @@ class GetAvailabilityAppointment:
             )
 
             # Vérification de la disponibilité
-            request = requests.get(formatapi, headers=HEADERS)
+            request = requests.get(format_api, headers=HEADERS)
             data = request.json()
             if data.get("next_slot"):
                 premier_creneau = datetime.fromisoformat(data["next_slot"])
                 print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
-            elif data.get("availabilities"):
-                # L'API renvoie bien "solts" (faute du fournisseur)
-                premier_creneau = datetime.fromisoformat(data["availabilities"][0]["solts"][0])
+            elif data.get("availabilities") and any(
+                availability.get("slots") for availability in data["availabilities"]
+            ):
+                premier_creneau = next(
+                    datetime.fromisoformat(availability["slots"][0])
+                    for availability in data["availabilities"]
+                    if availability.get("slots")
+                )
                 print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
             else:
                 print("Pas de créneau disponible")
         return premier_creneau, visit_ids, matched_reason_id
 
-    def get_maiia_availebility(self, apis, consultation_reason):
+    def get_maiia_availebility(self, url, consultation_reason):
         """Récupère les rdv depuis les APIs du domain Maiia si pas
         de corespondance avec consultation_reason extrait les nom des
         motif de consultation mais ne cherche pas si des rdv sont
@@ -166,8 +124,8 @@ class GetAvailabilityAppointment:
 
         Parameters
         ----------
-        apis : list of string
-            List des apis extraite sur la page Url
+        url : string
+            Url de la page sur laquel les api doit etre extraite
         consultation_reason : string
             Le motif fourni en argument du main
 
@@ -186,23 +144,39 @@ class GetAvailabilityAppointment:
         visit_ids = {}
 
         print(f"{now_str()}: API Maiia trouvée")
-        reason = next((api for api in apis if "reason" in api), None)
-        availability = next((api for api in apis if "availability" in api), None)
-        if not availability:
-            print(f"{now_str()}: API availability non trouvée")
-            sys.exit(1)
-        availability_api = availability
+        match_center_id = re.search("centerId=(?P<centerId>[^\\?\\/\\s]*)", url, re.I)
+        root_center_id = match_center_id.group("centerId") if match_center_id else ""
+        page = requests.get(url, headers=HEADERS)
+        march_speciality_id = re.search(
+            '"practitionerId":"(?P<practitionerId>[^"]*)', page.text, re.I
+        )
 
+        speciality_id = march_speciality_id.group("practitionerId") if march_speciality_id else ""
+        print(f"speciality_id:{speciality_id}")
+        reason_api = (
+            "https://www.maiia.com/api/pat-public/consultation-reason-hcd"
+            "?checkAvailability=true&limit=200&page=0"
+            f"&rootCenterId={root_center_id}"
+            f"&practitionerId={speciality_id}"
+        )
+        availability_api = (
+            "https://www.maiia.com/api/pat-public/availability-closests?"
+            f"centerId={root_center_id}"
+            "&page=0"
+            f"&practitionerId={speciality_id}"
+        )
+        print(f"{now_str()}: reason_api: {reason_api}")
+        print(f"{now_str()}: availability_api: {availability_api}")
         # Récupération de l'ID de la raison de consultation
-        if reason is not None:
-            data = get_json(reason)
-            if data["total"] > 0:
+        if reason_api is not None:
+            reason_data = get_json(reason_api)
+            if reason_data["total"] > 0:
                 print(f"{now_str()}: Plusieurs raisons de consultation disponibles")
-                for reason in data["items"]:
-                    visit_ids[reason["name"]] = reason["id"]
+                for reason_api in reason_data["items"]:
+                    visit_ids[reason_api["name"]] = reason_api["id"]
                     # print(f"{now_str()}: Raison: {reason['name']} - ID: {reason['id']}")
-                    if reason["name"] == consultation_reason:
-                        matched_reason_id = reason["id"]
+                    if reason_api["name"] == consultation_reason:
+                        matched_reason_id = reason_api["id"]
                         availability_api = (
                             f"{availability_api}&consultationReasonId={matched_reason_id}"
                         )
@@ -214,10 +188,10 @@ class GetAvailabilityAppointment:
                 )
             else:
                 # Vérification de la disponibilité
-                data = get_json(availability_api)
-                if data["availabilityCount"] > 0:
+                availability_data = get_json(availability_api)
+                if availability_data["availabilityCount"] > 0:
                     premier_creneau = datetime.strptime(
-                        data["firstAvailabilityStartDateTime"], "%Y-%m-%dT%H:%M:%S.%fZ"
+                        availability_data["firstAvailabilityStartDateTime"], "%Y-%m-%dT%H:%M:%S.%fZ"
                     )
                     print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
                 else:
@@ -329,18 +303,20 @@ class GetAvailabilityAppointment:
 
         print(f"{now_str()}: Début du script")
 
-        apis, domain = self.get_apis_from_page(url)  # Récupération des API de la page
+        domain = re.search(
+            "^(?:https?:\\/\\/)?(?:[^@\\/\\n]+@)?(?:www\\.)?([^:\\/\\n]+)", url
+        ).group(1)
 
         if domain == "doctolib.fr":
             """ Doctolib API """
             premier_creneau, visit_ids, matched_reason_id = self.get_doctolib_availebility(
-                apis, consultation_reason
+                url, consultation_reason
             )
 
         elif domain == "maiia.com":
             """ Maiia API """
             premier_creneau, visit_ids, matched_reason_id = self.get_maiia_availebility(
-                apis, consultation_reason
+                url, consultation_reason
             )
 
         if os.path.exists(FILE_PATH_HISTO):
