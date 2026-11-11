@@ -33,6 +33,7 @@ HEADERS = {
 FILE_PATH_HISTO = "./historique.json"
 FILE_PATH_LOG = "./message.log"
 LEVEL_LOG = logging.INFO
+FILE_PATH_TOKEN = "./secrets/token.json"
 
 
 """ Paramètres de configuration du logger """
@@ -385,8 +386,15 @@ class GetAvailabilityAppointment:
                 )
                 msg["To"] = "ludovictaut@gmail.com"
                 msg.set_content(message)
-                gmail_send_message(msg)
-                logger.info("Email envoyé via API Gmail")
+                if os.path.exists(FILE_PATH_TOKEN):
+                    gmail_send_message(msg)
+                    logger.info("Email envoyé via API Gmail")
+                else:
+                    logger.warning(
+                        "Le fichier token.json n'existe pas. "
+                        "Veuillez vérifier le chemin et les autorisations."
+                    )
+
                 if url not in json_historique:
                     json_historique[url] = {}
                 json_historique[url][consultation_reason] = {
@@ -402,6 +410,11 @@ class GetAvailabilityAppointment:
 
             except Exception as e:
                 logger.Error(f"{e}")
+        return {
+            "message": message,
+            "is_alerte_raison": is_alerte_raison,
+            "is_rdv_trouve": is_rdv_trouve,
+        }
 
 
 if __name__ == "__main__":
