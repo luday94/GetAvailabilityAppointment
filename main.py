@@ -1,5 +1,7 @@
 import argparse
 import json
+import logging
+import logging.handlers
 import os
 import re
 from datetime import datetime
@@ -10,8 +12,15 @@ from dotenv import load_dotenv
 
 from gmail.send_message import gmail_send_message
 
+"""Configuration générale"""
 FORMATDATE = "%Y-%m-%d %H:%M:%S"
 
+HEADERSPOSTMAN = {
+    "User-Agent": "PostmanRuntime/7.56.1",
+    "Accept": "*/*",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+}
 
 HEADERS = {
     "User-Agent": (
@@ -22,10 +31,28 @@ HEADERS = {
 }
 
 FILE_PATH_HISTO = "./historique.json"
+FILE_PATH_LOG = "./message.log"
+LEVEL_LOG = logging.INFO
 
 
-def now_str():
-    return datetime.now().strftime(FORMATDATE)
+""" Paramètres de configuration du logger """
+logging.basicConfig(
+    format="[%(asctime)s] %(levelname)-8s : %(message)s",
+    level=LEVEL_LOG,
+    encoding="utf-8",
+    datefmt=FORMATDATE,
+)
+logger = logging.getLogger("twitter")
+handler = logging.handlers.RotatingFileHandler(
+    FILE_PATH_LOG, maxBytes=1024000, backupCount=5, encoding="utf-8"
+)
+handler.setFormatter(
+    logging.Formatter(
+        "[%(asctime)s] %(levelname)-8s : %(message)s",
+        datefmt=FORMATDATE,
+    )
+)
+logger.addHandler(handler)
 
 
 def get_json(url: str) -> dict:
@@ -57,22 +84,25 @@ class GetAvailabilityAppointment:
                 list des nom des motif de rdv possible pour le practicien
             matched_reason_id : id associé à consultation_reason
         """
+        logger.debug("Start get_doctolib_availebility")
 
         premier_creneau = None
         matched_reason_id = None
         visit_ids = {}
+
         api_param = re.search("\\/(?P<api_param>[^\\/\\?]*)(\\?|$)", url, re.I | re.M).group(
             "api_param"
         )
-        print(f"{now_str()}: API Doctolib trouvée {api_param}")
+        logger.debug(f"API Doctolib trouvée {api_param}")
+
         data = get_json(
             f"https://www.doctolib.fr/online_booking/api/slot_selection_funnel/v1/info.json?profile_slug={api_param}&locale=fr"
         )
-
         for visit_motive in data["data"]["visit_motives"]:
             visit_ids[visit_motive["name"]] = visit_motive["id"]
             if visit_motive["name"].strip() == consultation_reason.strip():
                 matched_reason_id = visit_motive["id"]
+                logger.debug(f"matched_reason_id: {matched_reason_id}")
                 break
         if matched_reason_id is not None:
             agenda_id = None
@@ -81,9 +111,11 @@ class GetAvailabilityAppointment:
                 for i_visit_motive_id in agenda["visit_motive_ids"]:
                     if matched_reason_id == i_visit_motive_id:
                         agenda_id = agenda["id"]
+                        logger.debug(f"agenda_id: {agenda_id}")
                         break
                 if agenda_id is not None:
                     practice_id = agenda["practice_id"]
+                    logger.debug(f"practice_id: {practice_id}")
                     break
 
             today = datetime.now().strftime("%Y-%m-%d")
@@ -96,13 +128,14 @@ class GetAvailabilityAppointment:
                 f"&start_date={today}"
                 f"&limit=15"
             )
+            logger.debug(f"format_api: {format_api}")
 
             # Vérification de la disponibilité
             request = requests.get(format_api, headers=HEADERS)
             data = request.json()
             if data.get("next_slot"):
                 premier_creneau = datetime.fromisoformat(data["next_slot"])
-                print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
+                logger.info(f"Premier créneau disponible: {premier_creneau}")
             elif data.get("availabilities") and any(
                 availability.get("slots") for availability in data["availabilities"]
             ):
@@ -111,9 +144,11 @@ class GetAvailabilityAppointment:
                     for availability in data["availabilities"]
                     if availability.get("slots")
                 )
-                print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
+                logger.info(f"Premier créneau disponible: {premier_creneau}")
             else:
-                print("Pas de créneau disponible")
+                logger.info("Pas de créneau disponible")
+        else:
+            logger.warning(f"Aucune raison de consultation trouvée pour {consultation_reason}")
         return premier_creneau, visit_ids, matched_reason_id
 
     def get_maiia_availebility(self, url, consultation_reason):
@@ -138,21 +173,26 @@ class GetAvailabilityAppointment:
                 list des nom des motif de rdv possible pour le practicien
             matched_reason_id : id associé à consultation_reason
         """
-
+        logger.debug("Start get_maiia_availebility")
         premier_creneau = None
         matched_reason_id = None
         visit_ids = {}
 
-        print(f"{now_str()}: API Maiia trouvée")
+        logger.info("API Maiia")
         match_center_id = re.search("centerId=(?P<centerId>[^\\?\\/\\s]*)", url, re.I)
         root_center_id = match_center_id.group("centerId") if match_center_id else ""
-        page = requests.get(url, headers=HEADERS)
+        page = requests.get(url, headers=HEADERSPOSTMAN)
         march_speciality_id = re.search(
             '"practitionerId":"(?P<practitionerId>[^"]*)', page.text, re.I
         )
+        logger.debug(f"page.text: {page.text}")
+        if march_speciality_id is not None:
+            speciality_id = march_speciality_id.group("practitionerId")
+        else:
+            logger.warning("Aucun practitionerId trouvé dans la page")
+            speciality_id = ""
+        logger.debug(f"speciality_id:{speciality_id}")
 
-        speciality_id = march_speciality_id.group("practitionerId") if march_speciality_id else ""
-        print(f"speciality_id:{speciality_id}")
         reason_api = (
             "https://www.maiia.com/api/pat-public/consultation-reason-hcd"
             "?checkAvailability=true&limit=200&page=0"
@@ -165,16 +205,18 @@ class GetAvailabilityAppointment:
             "&page=0"
             f"&practitionerId={speciality_id}"
         )
-        print(f"{now_str()}: reason_api: {reason_api}")
-        print(f"{now_str()}: availability_api: {availability_api}")
+
+        logger.debug(f"reason_api: {reason_api}")
+        logger.debug(f"availability_api: {availability_api}")
+
         # Récupération de l'ID de la raison de consultation
         if reason_api is not None:
             reason_data = get_json(reason_api)
             if reason_data["total"] > 0:
-                print(f"{now_str()}: Plusieurs raisons de consultation disponibles")
+                logger.info("Plusieurs raisons de consultation disponibles")
                 for reason_api in reason_data["items"]:
                     visit_ids[reason_api["name"]] = reason_api["id"]
-                    # print(f"{now_str()}: Raison: {reason['name']} - ID: {reason['id']}")
+                    # logger.info("Raison: {reason['name']} - ID: {reason['id']}")
                     if reason_api["name"] == consultation_reason:
                         matched_reason_id = reason_api["id"]
                         availability_api = (
@@ -182,9 +224,8 @@ class GetAvailabilityAppointment:
                         )
                         break
             if matched_reason_id is None:
-                print(
-                    f"{now_str()}: Raison de consultation {consultation_reason} "
-                    f"non disponible {visit_ids}"
+                logger.debug(
+                    f"Raison de consultation '{consultation_reason}' non disponible {visit_ids}"
                 )
             else:
                 # Vérification de la disponibilité
@@ -193,11 +234,11 @@ class GetAvailabilityAppointment:
                     premier_creneau = datetime.strptime(
                         availability_data["firstAvailabilityStartDateTime"], "%Y-%m-%dT%H:%M:%S.%fZ"
                     )
-                    print(f"{now_str()}: Premier créneau disponible: {premier_creneau}")
+                    logger.info(f"Premier créneau disponible: {premier_creneau}")
                 else:
-                    print(f"{now_str()}: Pas de créneau disponible")
+                    logger.info("Pas de créneau disponible")
         else:
-            print(f"{now_str()}: Aucune raison de consultation trouvée")
+            logger.warning(f"Aucune raison de consultation trouvée pour {consultation_reason}")
         return premier_creneau, visit_ids, matched_reason_id
 
     def edit_message(
@@ -237,6 +278,7 @@ class GetAvailabilityAppointment:
             message : str
                 Le corps du message à envoyer.
         """
+        logger.debug("Start edit_message")
         is_alerte_raison, is_rdv_trouve = False, False
         message = ""
 
@@ -272,7 +314,7 @@ class GetAvailabilityAppointment:
                 f"{premier_creneau.strftime(FORMATDATE)}\n{url}"
             )
         elif is_date_deja_envoye:
-            print(f"{now_str()}: Un mail à déjà été envoyé")
+            logger.info("Un mail à déjà été envoyé")
 
         # Si la raison fournie n'est pas bonne alors la fournir si elle exite à l'utilisateur
         if (
@@ -284,8 +326,9 @@ class GetAvailabilityAppointment:
                 and json_historique[url][consultation_reason]["is_alerte_raison"]
             )
         ):
-            print(
-                f"{now_str()}: Pas de correspondance pour consultation_reason, ajout d'une alerte"
+            logger.warning(
+                "Aucune correspondance trouvée pour "
+                f"la raison de consultation: {consultation_reason}"
             )
             is_alerte_raison = True
             list_reasons = ("\n-").join(visit_ids.keys())
@@ -296,12 +339,12 @@ class GetAvailabilityAppointment:
                 f"CONSULTATION_REASON fournie\n{message}"
             )
         elif matched_reason_id is None and visit_ids.keys().__len__() > 0:
-            print(f"{now_str()}: Un mail d'alerte à déjà été envoyé")
+            logger.info("Un mail d'alerte à déjà été envoyé")
         return is_alerte_raison, is_rdv_trouve, message
 
     def main(self, url, consultation_reason):
-
-        print(f"{now_str()}: Début du script")
+        logger.debug(f"Start main: url: {url}, consultation_reason: {consultation_reason}")
+        logger.info("Début du script")
 
         domain = re.search(
             "^(?:https?:\\/\\/)?(?:[^@\\/\\n]+@)?(?:www\\.)?([^:\\/\\n]+)", url
@@ -343,7 +386,7 @@ class GetAvailabilityAppointment:
                 msg["To"] = "ludovictaut@gmail.com"
                 msg.set_content(message)
                 gmail_send_message(msg)
-                print(f"{now_str()}: Email envoyé via API Gmail")
+                logger.info("Email envoyé via API Gmail")
                 if url not in json_historique:
                     json_historique[url] = {}
                 json_historique[url][consultation_reason] = {
@@ -358,7 +401,7 @@ class GetAvailabilityAppointment:
                     file.write(json.dumps(json_historique, indent=4))
 
             except Exception as e:
-                print(f"{now_str()}: Erreur : {e}")
+                logger.Error(f"{e}")
 
 
 if __name__ == "__main__":
